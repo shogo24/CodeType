@@ -1,9 +1,12 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 public class KeyInputManager : MonoBehaviour
 {
+    public AudioSource ClickSFX;
+    [SerializeField] private Toggle muteToggle;
     [System.Serializable]
     public class KeyBinding
     {
@@ -36,6 +39,10 @@ public class KeyInputManager : MonoBehaviour
             if (keyControl != null && keyControl.wasPressedThisFrame)
             {
                 pair.Value.Play();
+                if (muteToggle != null && muteToggle.isOn == false)
+                {
+                    ClickSFX?.PlayOneShot(ClickSFX.clip);
+                }
             }
         }
     }

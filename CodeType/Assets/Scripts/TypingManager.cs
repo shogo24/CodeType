@@ -7,30 +7,35 @@ using UnityEngine.InputSystem.Controls;
 public class TypingManager : MonoBehaviour
 {
     public TMP_Text codeText;
+    public TMP_Text accuracyText;
+    public TMP_Text wpmText;
+    public TMP_Text lastRunText;
 
     string code;
     int currentIndex = 0;
     bool hadMistake = false;
+
+    int totalKeystrokes = 0;
+    int correctKeystrokes = 0;
+    int typedCharacters = 0;
+    float startTime;
+    float lastAccuracy;
+    float lastWPM;
+
     Color[] charColors;
 
     Color defaultColor = new Color(0.72f, 0.75f, 0.80f);
     Color completedColor = new Color(0.45f, 0.65f, 0.85f);
     Color mistakeColor = new Color(0.92f, 0.48f, 0.50f);
-    Color caretColor = new Color(0.88f, 0.91f, 0.98f);
+    Color caretColor = new Color(1f, 1f, 1f);
 
     int maxVisibleLines = 10;
     int firstVisibleLine = 0;
+    int scrollMargin = 2;
 
     void Start()
     {
-        CodeGenerator generator = GetComponent<CodeGenerator>();
-        code = generator.GenerateCode();
-
-        charColors = new Color[code.Length];
-        for (int i = 0; i < charColors.Length; i++)
-            charColors[i] = defaultColor;
-
-        UpdateVisuals();
+        GenerateNewCode();
     }
 
     void Update()
@@ -57,25 +62,30 @@ public class TypingManager : MonoBehaviour
     void HandleInput(char typed)
     {
         if (typed == '\0') return;
+        totalKeystrokes++;
         if (currentIndex >= code.Length) return;
 
         if (typed == '\t')
         {
             const int tabWidth = 4;
             int consumed = 0;
-            while (currentIndex < code.Length && (code[currentIndex] == ' ' || code[currentIndex] == '·') && consumed < tabWidth)
+
+            while (currentIndex < code.Length &&
+                  (code[currentIndex] == ' ' || code[currentIndex] == '·') &&
+                   consumed < tabWidth)
             {
                 charColors[currentIndex] = hadMistake ? mistakeColor : completedColor;
                 currentIndex++;
                 consumed++;
+                typedCharacters++;
+                correctKeystrokes++;
                 UpdateScroll();
             }
 
             if (consumed == 0)
             {
                 hadMistake = true;
-                if (currentIndex < code.Length)
-                    charColors[currentIndex] = mistakeColor;
+                charColors[currentIndex] = mistakeColor;
             }
             else
             {
@@ -90,6 +100,9 @@ public class TypingManager : MonoBehaviour
 
         if (IsMatch(typed, expected))
         {
+            correctKeystrokes++;
+            typedCharacters++;
+
             charColors[currentIndex] = hadMistake ? mistakeColor : completedColor;
             currentIndex++;
             hadMistake = false;
@@ -125,8 +138,10 @@ public class TypingManager : MonoBehaviour
     {
         if (expected == '·')
             return typed == ' ' || typed == '·';
+
         if (typed == '·')
             typed = ' ';
+
         return typed == expected;
     }
 
@@ -140,18 +155,17 @@ public class TypingManager : MonoBehaviour
 
         var kc = key.keyCode;
 
-        bool shift = Keyboard.current?.shiftKey?.isPressed == true;
-        bool caps = Keyboard.current?.capsLockKey?.isPressed == true;
+        bool shift = Keyboard.current.shiftKey.isPressed;
+        bool caps = Keyboard.current.capsLockKey.isPressed;
 
         if (kc >= Key.A && kc <= Key.Z)
         {
-            int offset = kc - Key.A;
-            char c = (char)('a' + offset);
+            char c = (char)('a' + (kc - Key.A));
             if (shift ^ caps) c = char.ToUpper(c);
             return c;
         }
 
-        Key[] digits = new Key[]
+        Key[] digits =
         {
             Key.Digit0, Key.Digit1, Key.Digit2, Key.Digit3, Key.Digit4,
             Key.Digit5, Key.Digit6, Key.Digit7, Key.Digit8, Key.Digit9
@@ -161,12 +175,7 @@ public class TypingManager : MonoBehaviour
         {
             if (kc == digits[i])
             {
-                if (shift)
-                {
-                    string symbols = ")!@#$%^&*(";
-                    return symbols[i];
-                }
-                return (char)('0' + i);
+                return shift ? ")!@#$%^&*("[i] : (char)('0' + i);
             }
         }
 
@@ -191,15 +200,13 @@ public class TypingManager : MonoBehaviour
     void UpdateVisuals()
     {
         StringBuilder sb = new StringBuilder();
-
         int currentLine = 0;
 
         for (int i = 0; i < code.Length; i++)
         {
             if (currentLine < firstVisibleLine)
             {
-                if (code[i] == '\n')
-                    currentLine++;
+                if (code[i] == '\n') currentLine++;
                 continue;
             }
 
@@ -211,7 +218,6 @@ public class TypingManager : MonoBehaviour
             sb.Append("<color=#");
             sb.Append(ColorUtility.ToHtmlStringRGB(color));
             sb.Append(">");
-
             sb.Append(code[i]);
             sb.Append("</color>");
 
@@ -220,16 +226,27 @@ public class TypingManager : MonoBehaviour
         }
 
         codeText.text = sb.ToString();
+
+        if (accuracyText != null)
+            accuracyText.text = $"Accuracy: {GetAccuracy():0.0}%";
+
+        if (wpmText != null)
+            wpmText.text = $"Current\n" + $"WPM: {GetWPM():0}";
+
+        if (lastRunText != null)
+        {
+            lastRunText.text =
+                $"Last Run\n" +
+                $"WPM: {lastWPM:0}\n" +
+                $"Accuracy: {lastAccuracy:0.0}%";
+        }
     }
 
     int GetLineFromIndex(int index)
     {
         int line = 0;
         for (int i = 0; i < index && i < code.Length; i++)
-        {
-            if (code[i] == '\n')
-                line++;
-        }
+            if (code[i] == '\n') line++;
         return line;
     }
 
@@ -237,20 +254,31 @@ public class TypingManager : MonoBehaviour
     {
         int caretLine = GetLineFromIndex(currentIndex);
 
-        int scrollMargin = 2;
-
         if (caretLine >= firstVisibleLine + maxVisibleLines - scrollMargin)
         {
             firstVisibleLine = caretLine - maxVisibleLines + 1 + scrollMargin;
-
-            if (firstVisibleLine < 0)
-                firstVisibleLine = 0;
+            if (firstVisibleLine < 0) firstVisibleLine = 0;
         }
     }
 
+    float GetAccuracy()
+    {
+        if (totalKeystrokes == 0) return 100f;
+        return (float)correctKeystrokes / totalKeystrokes * 100f;
+    }
+
+    float GetWPM()
+    {
+        float minutes = (Time.time - startTime) / 60f;
+        if (minutes <= 0f) return 0f;
+        return (typedCharacters / 5f) / minutes;
+    }
 
     void GenerateNewCode()
     {
+        lastAccuracy = GetAccuracy();
+        lastWPM = GetWPM();
+
         CodeGenerator generator = GetComponent<CodeGenerator>();
         if (generator == null) return;
 
@@ -258,6 +286,11 @@ public class TypingManager : MonoBehaviour
         currentIndex = 0;
         hadMistake = false;
         firstVisibleLine = 0;
+
+        totalKeystrokes = 0;
+        correctKeystrokes = 0;
+        typedCharacters = 0;
+        startTime = Time.time;
 
         charColors = new Color[code.Length];
         for (int i = 0; i < charColors.Length; i++)
